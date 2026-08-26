@@ -223,12 +223,12 @@ var require_requires_port = __commonJS({
   }
 });
 
-// node_modules/.pnpm/http-proxy@1.18.1/node_modules/http-proxy/lib/http-proxy/common.js
+// node_modules/.pnpm/http-proxy@1.18.1_patch_has_d4ef74dad73d6d7498b264fc402326c2/node_modules/http-proxy/lib/http-proxy/common.js
 var require_common = __commonJS({
-  "node_modules/.pnpm/http-proxy@1.18.1/node_modules/http-proxy/lib/http-proxy/common.js"(exports2) {
+  "node_modules/.pnpm/http-proxy@1.18.1_patch_has_d4ef74dad73d6d7498b264fc402326c2/node_modules/http-proxy/lib/http-proxy/common.js"(exports2) {
     var common = exports2;
     var url = require("url");
-    var extend2 = require("util")._extend;
+    var extend2 = Object.assign;
     var required = require_requires_port();
     var upgradeHeader = /(^|,)\s*upgrade\s*($|,)/i;
     var isSSL = /^https|wss/;
@@ -333,9 +333,9 @@ var require_common = __commonJS({
   }
 });
 
-// node_modules/.pnpm/http-proxy@1.18.1/node_modules/http-proxy/lib/http-proxy/passes/web-outgoing.js
+// node_modules/.pnpm/http-proxy@1.18.1_patch_has_d4ef74dad73d6d7498b264fc402326c2/node_modules/http-proxy/lib/http-proxy/passes/web-outgoing.js
 var require_web_outgoing = __commonJS({
-  "node_modules/.pnpm/http-proxy@1.18.1/node_modules/http-proxy/lib/http-proxy/passes/web-outgoing.js"(exports2, module2) {
+  "node_modules/.pnpm/http-proxy@1.18.1_patch_has_d4ef74dad73d6d7498b264fc402326c2/node_modules/http-proxy/lib/http-proxy/passes/web-outgoing.js"(exports2, module2) {
     var url = require("url");
     var common = require_common();
     var redirectRegex = /^201|30(1|2|7|8)$/;
@@ -985,9 +985,9 @@ var require_follow_redirects = __commonJS({
   }
 });
 
-// node_modules/.pnpm/http-proxy@1.18.1/node_modules/http-proxy/lib/http-proxy/passes/web-incoming.js
+// node_modules/.pnpm/http-proxy@1.18.1_patch_has_d4ef74dad73d6d7498b264fc402326c2/node_modules/http-proxy/lib/http-proxy/passes/web-incoming.js
 var require_web_incoming = __commonJS({
-  "node_modules/.pnpm/http-proxy@1.18.1/node_modules/http-proxy/lib/http-proxy/passes/web-incoming.js"(exports2, module2) {
+  "node_modules/.pnpm/http-proxy@1.18.1_patch_has_d4ef74dad73d6d7498b264fc402326c2/node_modules/http-proxy/lib/http-proxy/passes/web-incoming.js"(exports2, module2) {
     var httpNative = require("http");
     var httpsNative = require("https");
     var web_o = require_web_outgoing();
@@ -1135,9 +1135,9 @@ var require_web_incoming = __commonJS({
   }
 });
 
-// node_modules/.pnpm/http-proxy@1.18.1/node_modules/http-proxy/lib/http-proxy/passes/ws-incoming.js
+// node_modules/.pnpm/http-proxy@1.18.1_patch_has_d4ef74dad73d6d7498b264fc402326c2/node_modules/http-proxy/lib/http-proxy/passes/ws-incoming.js
 var require_ws_incoming = __commonJS({
-  "node_modules/.pnpm/http-proxy@1.18.1/node_modules/http-proxy/lib/http-proxy/passes/ws-incoming.js"(exports2, module2) {
+  "node_modules/.pnpm/http-proxy@1.18.1_patch_has_d4ef74dad73d6d7498b264fc402326c2/node_modules/http-proxy/lib/http-proxy/passes/ws-incoming.js"(exports2, module2) {
     var http2 = require("http");
     var https = require("https");
     var common = require_common();
@@ -1249,11 +1249,11 @@ var require_ws_incoming = __commonJS({
   }
 });
 
-// node_modules/.pnpm/http-proxy@1.18.1/node_modules/http-proxy/lib/http-proxy/index.js
+// node_modules/.pnpm/http-proxy@1.18.1_patch_has_d4ef74dad73d6d7498b264fc402326c2/node_modules/http-proxy/lib/http-proxy/index.js
 var require_http_proxy = __commonJS({
-  "node_modules/.pnpm/http-proxy@1.18.1/node_modules/http-proxy/lib/http-proxy/index.js"(exports2, module2) {
+  "node_modules/.pnpm/http-proxy@1.18.1_patch_has_d4ef74dad73d6d7498b264fc402326c2/node_modules/http-proxy/lib/http-proxy/index.js"(exports2, module2) {
     var httpProxy2 = module2.exports;
-    var extend2 = require("util")._extend;
+    var extend2 = Object.assign;
     var parse_url = require("url").parse;
     var EE3 = require_eventemitter3();
     var http2 = require("http");
@@ -1366,9 +1366,9 @@ var require_http_proxy = __commonJS({
   }
 });
 
-// node_modules/.pnpm/http-proxy@1.18.1/node_modules/http-proxy/lib/http-proxy.js
+// node_modules/.pnpm/http-proxy@1.18.1_patch_has_d4ef74dad73d6d7498b264fc402326c2/node_modules/http-proxy/lib/http-proxy.js
 var require_http_proxy2 = __commonJS({
-  "node_modules/.pnpm/http-proxy@1.18.1/node_modules/http-proxy/lib/http-proxy.js"(exports2, module2) {
+  "node_modules/.pnpm/http-proxy@1.18.1_patch_has_d4ef74dad73d6d7498b264fc402326c2/node_modules/http-proxy/lib/http-proxy.js"(exports2, module2) {
     var ProxyServer = require_http_proxy().Server;
     function createProxyServer(options) {
       return new ProxyServer(options);
@@ -1380,9 +1380,9 @@ var require_http_proxy2 = __commonJS({
   }
 });
 
-// node_modules/.pnpm/http-proxy@1.18.1/node_modules/http-proxy/index.js
+// node_modules/.pnpm/http-proxy@1.18.1_patch_has_d4ef74dad73d6d7498b264fc402326c2/node_modules/http-proxy/index.js
 var require_http_proxy3 = __commonJS({
-  "node_modules/.pnpm/http-proxy@1.18.1/node_modules/http-proxy/index.js"(exports2, module2) {
+  "node_modules/.pnpm/http-proxy@1.18.1_patch_has_d4ef74dad73d6d7498b264fc402326c2/node_modules/http-proxy/index.js"(exports2, module2) {
     module2.exports = require_http_proxy2();
   }
 });
@@ -2234,6 +2234,22 @@ function checkBasicAuth(authorization, username, password) {
   if (sep === -1) return false;
   return safeEqual(decoded.slice(0, sep), username) && safeEqual(decoded.slice(sep + 1), password);
 }
+var SESSION_COOKIE = "dsh_proxy_session";
+function mintSessionToken() {
+  return (0, import_node_crypto.randomBytes)(32).toString("hex");
+}
+function readCookie(header, name2) {
+  if (header === void 0) return void 0;
+  for (const part of header.split(";")) {
+    const trimmed = part.trim();
+    const eq = trimmed.indexOf("=");
+    if (eq !== -1 && trimmed.slice(0, eq) === name2) return trimmed.slice(eq + 1);
+  }
+  return void 0;
+}
+function sessionCookieHeader(token) {
+  return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax`;
+}
 var Authenticator = class {
   constructor(config) {
     this.config = config;
@@ -2319,6 +2335,8 @@ function startLanProxy(options) {
   } = options;
   const targetOrigin = `http://${upstreamHost}:${upstreamPort}`;
   const auth = new Authenticator({ username, password });
+  const sessionToken = mintSessionToken();
+  const isRequestAuthenticated = (req) => auth.isAuthenticated(req.headers.authorization) || safeEqual(readCookie(req.headers.cookie, SESSION_COOKIE) ?? "", sessionToken);
   const proxy = import_http_proxy.default.createProxyServer({
     target: targetOrigin,
     ws: true,
@@ -2400,16 +2418,25 @@ function startLanProxy(options) {
       proxy.web(req, res);
       return;
     }
-    if (!auth.isAuthenticated(req.headers.authorization)) {
+    if (!isRequestAuthenticated(req)) {
       challenge(res);
       return;
+    }
+    if (auth.enabled && auth.isAuthenticated(req.headers.authorization)) {
+      res.setHeader("set-cookie", sessionCookieHeader(sessionToken));
     }
     alignOrigin(req);
     proxy.web(req, res);
   });
+  server.on("connection", (socket) => {
+    socket.on("error", (error) => {
+      log("warn", `client socket error ${error.code ?? error.message}`);
+      socket.destroy();
+    });
+  });
   const upgradedSockets = /* @__PURE__ */ new Set();
   server.on("upgrade", (req, socket, head) => {
-    if (!auth.isAuthenticated(req.headers.authorization)) {
+    if (!isRequestAuthenticated(req)) {
       socket.end(`HTTP/1.1 401 Unauthorized\r
 www-authenticate: Basic realm="${AUTH_REALM}"\r
 Connection: close\r
@@ -2758,7 +2785,7 @@ var RPC_START_ENDPOINT = "start";
 var RPC_STOP_ENDPOINT = "stop";
 
 // src/index.ts
-var name = "@smanx/dsh-proxy";
+var name = "@leeyorke/dsh-proxy";
 var inject = ["webServer", "connection"];
 var Config = Schema.object({
   listenHost: Schema.string().default("0.0.0.0"),
@@ -2874,12 +2901,12 @@ http-proxy/index.js:
   (*!
    * Caron dimonio, con occhi di bragia
    * loro accennando, tutte le raccoglie;
-   * batte col remo qualunque s’adagia 
+   * batte col remo qualunque s’adagia
    *
    * Charon the demon, with the eyes of glede,
    * Beckoning to them, collects them all together,
    * Beats with his oar whoever lags behind
-   *          
+   *
    *          Dante - The Divine Comedy (Canto III)
    *)
 */

@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: false
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  http-proxy@1.18.1: 3032f3a47f33911d5c278ec6f2d4e0e4afc8f977baea1012613b13de23831c73
+
 importers:
 
   .:
@@ -52,7 +55,7 @@ importers:
         version: 0.28.2
       http-proxy:
         specifier: ^1.18.1
-        version: 1.18.1
+        version: 1.18.1(patch_hash=3032f3a47f33911d5c278ec6f2d4e0e4afc8f977baea1012613b13de23831c73)
       jsdom:
         specifier: 29.1.1
         version: 29.1.1
@@ -1992,7 +1995,7 @@ snapshots:
     transitivePeerDependencies:
       - '@noble/hashes'
 
-  http-proxy@1.18.1:
+  http-proxy@1.18.1(patch_hash=3032f3a47f33911d5c278ec6f2d4e0e4afc8f977baea1012613b13de23831c73):
     dependencies:
       eventemitter3: 4.0.7
       follow-redirects: 1.16.0

@@ -34,7 +34,7 @@ import type { Duplex } from 'node:stream'
 import net from 'node:net'
 import os from 'node:os'
 import httpProxy from 'http-proxy'
-import { Authenticator } from './session.ts'
+import { Authenticator, SESSION_COOKIE, mintSessionToken, readCookie, safeEqual, sessionCookieHeader } from './session.ts'
 import { injectPolyfill, RANDOM_UUID_POLYFILL } from './polyfill.ts'
 import { isJavaScriptContentType, patchClientScript } from './clientpatch.ts'
 
@@ -98,6 +98,16 @@ export function startLanProxy(options: LanProxyOptions): LanProxyHandle {
   } = options
   const targetOrigin = `http://${upstreamHost}:${upstreamPort}`
   const auth = new Authenticator({ username, password })
+  // Safari authenticates WebSocket handshakes separately from the page (it
+  // does not replay the page's Basic credentials on an upgrade request),
+  // which made iOS clients prompt for the password twice. A session cookie
+  // issued on Basic-authenticated responses is accepted on both carriers;
+  // Chromium already replays credentials, so its flow is unchanged. The
+  // token lives only for this proxy start and is compared constant-time.
+  const sessionToken = mintSessionToken()
+  const isRequestAuthenticated = (req: http.IncomingMessage): boolean =>
+    auth.isAuthenticated(req.headers.authorization)
+    || safeEqual(readCookie(req.headers.cookie, SESSION_COOKIE) ?? '', sessionToken)
 
   const proxy = httpProxy.createProxyServer({
     target: targetOrigin,
@@ -215,17 +225,37 @@ export function startLanProxy(options: LanProxyOptions): LanProxyHandle {
       proxy.web(req, res)
       return
     }
-    if (!auth.isAuthenticated(req.headers.authorization)) {
+    if (!isRequestAuthenticated(req)) {
       challenge(res)
       return
+    }
+    // Issue the session capability only on proof of the actual password (not
+    // on requests that merely presented a valid cookie), so the token never
+    // leaks to an unauthenticated caller. With password login off there is
+    // nothing to gate and no cookie is issued.
+    if (auth.enabled && auth.isAuthenticated(req.headers.authorization)) {
+      res.setHeader('set-cookie', sessionCookieHeader(sessionToken))
     }
     alignOrigin(req)
     proxy.web(req, res)
   })
 
+  // Mobile peers routinely reset connections mid-handshake (tab closes, auth
+  // retries, network switches). Neither the 401 write in the upgrade handler
+  // below nor http-proxy's ws pass observes socket errors until after the
+  // upstream answers, so observe them here first: an unobserved ECONNRESET
+  // escapes as an unhandled 'error' event and kills the whole dsh web
+  // process this plugin runs inside.
+  server.on('connection', (socket) => {
+    socket.on('error', (error: NodeJS.ErrnoException) => {
+      log('warn', `client socket error ${error.code ?? error.message}`)
+      socket.destroy()
+    })
+  })
+
   const upgradedSockets = new Set<net.Socket>()
   server.on('upgrade', (req, socket, head) => {
-    if (!auth.isAuthenticated(req.headers.authorization)) {
+    if (!isRequestAuthenticated(req)) {
       socket.end(`HTTP/1.1 401 Unauthorized\r\nwww-authenticate: Basic realm="${AUTH_REALM}"\r\nConnection: close\r\n\r\n`)
       return
     }

@@ -1,4 +1,10 @@
 packages:
   - .
 
+allowBuilds:
+  esbuild: true
+
 autoInstallPeers: false
+
+patchedDependencies:
+  http-proxy@1.18.1: patches/http-proxy@1.18.1.patch
