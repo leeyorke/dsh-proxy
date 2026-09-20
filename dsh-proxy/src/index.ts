@@ -103,8 +103,11 @@ export function apply(ctx: Context, config?: Config): void {
       // The channel rides the same trust fence and browser-session
       // authentication as `/api` (the plugin's proxy rewrites Host and
       // Origin to the loopback upstream, so proxied LAN traffic passes the
-      // Host fence exactly like the shared API channel).
+      // Host fence exactly like the shared API channel). A fence that
+      // throws refuses the request (fail closed) and is logged loudly —
+      // the channel must never silently open if the harness API moves.
       fence: (request) => ctx.connection.requestRejection(request),
+      onFenceError: (error) => log('error', `dsh-proxy: channel trust fence failed, request refused: ${String(error)}`),
       handler: async (endpoint, payload): Promise<ChannelRpcResult> => {
         if (endpoint === RPC_STATUS_ENDPOINT) {
           return { ok: true, value: await controller.refreshStatus() }

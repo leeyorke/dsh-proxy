@@ -70,6 +70,13 @@ export interface ChannelRouteOptions {
   readonly fence: ChannelTrustFence
   /** Maximum buffered request body; larger bodies are refused with 413. */
   readonly maxBodyBytes?: number
+  /**
+   * Sink for fence failures. A fence that throws must never admit the request
+   * (fail closed) and never leave it hanging: the route answers 403 and reports
+   * here so a harness API rename shows up loudly instead of silently opening
+   * the channel or stalling callers.
+   */
+  readonly onFenceError?: (error: unknown) => void
 }
 
 /** Decoded `client-request` envelope. */
@@ -109,80 +116,111 @@ export function createChannelRoute(options: ChannelRouteOptions): WebRoute {
     kind: 'prefix',
     path: channel,
     handler: async (req, res) => {
-      const rejection = fence(req)
-      if (rejection !== undefined) {
-        res.writeHead(rejection)
-        res.end(rejection === 401 ? 'unauthorized' : 'forbidden')
-        return
-      }
-      const pathname = new URL(req.url ?? '/', 'http://dsh.invalid').pathname
-      const endpoint = channelEndpoint(channel, pathname)
-      if (req.method !== 'POST' || endpoint === undefined) {
-        res.writeHead(404)
-        res.end('not found')
-        return
-      }
-      const mediaType = req.headers['content-type']?.split(';', 1)[0]?.trim().toLowerCase()
-      if (mediaType !== 'application/json') {
-        res.writeHead(415)
-        res.end('content type must be application/json')
-        return
-      }
-      const body = await readBody(req, res, maxBodyBytes)
-      if (body === undefined) return
-      let parsed: unknown
+      // A response whose socket dies mid-write must not surface as an
+      // unhandled 'error' event, which would take the whole process down.
+      res.on('error', () => {})
       try {
-        parsed = JSON.parse(body.toString('utf8'))
+        await dispatch(req, res)
       } catch {
-        res.writeHead(400)
-        res.end('body is not JSON')
-        return
-      }
-      const message = parseClientRequest(parsed)
-      if (message === undefined) {
-        respond(res, {
-          type: 'server-response',
-          rpcId: INVALID_REQUEST_RPC_ID,
-          result: {
-            ok: false,
-            error: {
-              code: 'gateway/bad-request',
-              message: 'invalid client-request message',
-              details: {},
-            },
-          },
-        })
-        return
-      }
-      if (message.method !== endpoint) {
-        respond(res, {
-          type: 'server-response',
-          rpcId: message.rpcId,
-          result: {
-            ok: false,
-            error: {
-              code: 'gateway/bad-request',
-              message: `method ${JSON.stringify(message.method)} does not match endpoint ${JSON.stringify(endpoint)}`,
-              details: {},
-            },
-          },
-        })
-        return
-      }
-      // Client-disconnect detection hangs off the response, not the request:
-      // IncomingMessage 'close' fires as soon as the body is consumed.
-      const abort = new AbortController()
-      res.on('close', () => {
-        if (!res.writableEnded) abort.abort()
-      })
-      try {
-        const result = await handler(endpoint, message.payload, abort.signal)
-        respond(res, { type: 'server-response', rpcId: message.rpcId, result })
-      } catch (error) {
-        res.writeHead(500)
-        res.end(`handler failure: ${String(error)}`)
+        // Nothing may leave a request hanging: an unexpected failure (e.g. a
+        // reset mid-upload) still gets an answer, or the socket is already
+        // gone and there is nothing left to answer on.
+        if (!res.writableEnded) {
+          try {
+            res.writeHead(500)
+            res.end('internal error')
+          } catch {
+            // socket already destroyed — nothing to do
+          }
+        }
       }
     },
+  }
+
+  async function dispatch(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    let rejection: number | undefined
+    try {
+      rejection = fence(req)
+    } catch (error) {
+      // Fail closed: a fence that cannot run refuses the request instead of
+      // admitting it, and reports so the cause is visible in the log.
+      options.onFenceError?.(error)
+      res.writeHead(403)
+      res.end('forbidden')
+      return
+    }
+    if (rejection !== undefined) {
+      res.writeHead(rejection)
+      res.end(rejection === 401 ? 'unauthorized' : 'forbidden')
+      return
+    }
+    const pathname = new URL(req.url ?? '/', 'http://dsh.invalid').pathname
+    const endpoint = channelEndpoint(channel, pathname)
+    if (req.method !== 'POST' || endpoint === undefined) {
+      res.writeHead(404)
+      res.end('not found')
+      return
+    }
+    const mediaType = req.headers['content-type']?.split(';', 1)[0]?.trim().toLowerCase()
+    if (mediaType !== 'application/json') {
+      res.writeHead(415)
+      res.end('content type must be application/json')
+      return
+    }
+    const body = await readBody(req, res, maxBodyBytes)
+    if (body === undefined) return
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(body.toString('utf8'))
+    } catch {
+      res.writeHead(400)
+      res.end('body is not JSON')
+      return
+    }
+    const message = parseClientRequest(parsed)
+    if (message === undefined) {
+      respond(res, {
+        type: 'server-response',
+        rpcId: INVALID_REQUEST_RPC_ID,
+        result: {
+          ok: false,
+          error: {
+            code: 'gateway/bad-request',
+            message: 'invalid client-request message',
+            details: {},
+          },
+        },
+      })
+      return
+    }
+    if (message.method !== endpoint) {
+      respond(res, {
+        type: 'server-response',
+        rpcId: message.rpcId,
+        result: {
+          ok: false,
+          error: {
+            code: 'gateway/bad-request',
+            message: `method ${JSON.stringify(message.method)} does not match endpoint ${JSON.stringify(endpoint)}`,
+            details: {},
+          },
+        },
+      })
+      return
+    }
+    // Client-disconnect detection hangs off the response, not the request:
+    // IncomingMessage 'close' fires as soon as the body is consumed.
+    const abort = new AbortController()
+    res.on('close', () => {
+      if (!res.writableEnded) abort.abort()
+    })
+    try {
+      const result = await handler(endpoint, message.payload, abort.signal)
+      respond(res, { type: 'server-response', rpcId: message.rpcId, result })
+    } catch (error) {
+      res.writeHead(500)
+      res.end(`handler failure: ${String(error)}`)
+    }
   }
 }
 

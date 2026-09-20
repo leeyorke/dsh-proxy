@@ -56,6 +56,13 @@ export interface ChannelRouteOptions {
     readonly fence: ChannelTrustFence;
     /** Maximum buffered request body; larger bodies are refused with 413. */
     readonly maxBodyBytes?: number;
+    /**
+     * Sink for fence failures. A fence that throws must never admit the request
+     * (fail closed) and never leave it hanging: the route answers 403 and reports
+     * here so a harness API rename shows up loudly instead of silently opening
+     * the channel or stalling callers.
+     */
+    readonly onFenceError?: (error: unknown) => void;
 }
 /**
  * Extract the endpoint from a channel pathname, applying the same grammar

@@ -21,17 +21,21 @@ afterEach(async () => {
 
 interface World {
   origin: string
-  seen: { fenceCalls: number; endpoints: string[]; payloads: unknown[] }
+  seen: { fenceCalls: number; endpoints: string[]; payloads: unknown[]; fenceErrors: unknown[] }
 }
 
-async function mount(handler: ChannelRpcHandler, fence?: (request: http.IncomingMessage) => number | undefined): Promise<World> {
-  const seen: World['seen'] = { fenceCalls: 0, endpoints: [], payloads: [] }
+async function mount(
+  handler: ChannelRpcHandler,
+  fence?: (request: http.IncomingMessage) => number | undefined,
+): Promise<World> {
+  const seen: World['seen'] = { fenceCalls: 0, endpoints: [], payloads: [], fenceErrors: [] }
   server = http.createServer(createChannelRoute({
     channel: CHANNEL,
     fence: (request) => {
       seen.fenceCalls += 1
       return fence?.(request)
     },
+    onFenceError: (error) => seen.fenceErrors.push(error),
     handler: async (endpoint, payload) => {
       seen.endpoints.push(endpoint)
       seen.payloads.push(payload)
@@ -146,6 +150,22 @@ describe('createChannelRoute', () => {
     const response = await call(world, 'status', request('rpc-4', 'status'))
     expect(response.status).toBe(403)
     expect(response.text).toBe('forbidden')
+  })
+
+  it('fails closed when the fence itself throws (harness API drift)', async () => {
+    const world = await mount(
+      async () => ({ ok: true, value: null }),
+      () => {
+        throw new TypeError("Cannot read properties of undefined (reading 'requestRejection')")
+      },
+    )
+    const response = await call(world, 'status', request('rpc-4b', 'status'))
+    // The request must be refused, never admitted, and never left hanging.
+    expect(response.status).toBe(403)
+    expect(response.text).toBe('forbidden')
+    expect(world.seen.endpoints).toEqual([])
+    expect(world.seen.fenceErrors).toHaveLength(1)
+    expect(String(world.seen.fenceErrors[0])).toContain('requestRejection')
   })
 
   it('refuses non-POST methods with 404', async () => {

@@ -3221,79 +3221,102 @@ function createChannelRoute(options) {
     kind: "prefix",
     path: channel,
     handler: async (req, res) => {
-      const rejection = fence(req);
-      if (rejection !== void 0) {
-        res.writeHead(rejection);
-        res.end(rejection === 401 ? "unauthorized" : "forbidden");
-        return;
-      }
-      const pathname = new URL(req.url ?? "/", "http://dsh.invalid").pathname;
-      const endpoint = channelEndpoint(channel, pathname);
-      if (req.method !== "POST" || endpoint === void 0) {
-        res.writeHead(404);
-        res.end("not found");
-        return;
-      }
-      const mediaType = req.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase();
-      if (mediaType !== "application/json") {
-        res.writeHead(415);
-        res.end("content type must be application/json");
-        return;
-      }
-      const body = await readBody(req, res, maxBodyBytes);
-      if (body === void 0) return;
-      let parsed;
-      try {
-        parsed = JSON.parse(body.toString("utf8"));
-      } catch {
-        res.writeHead(400);
-        res.end("body is not JSON");
-        return;
-      }
-      const message = parseClientRequest(parsed);
-      if (message === void 0) {
-        respond(res, {
-          type: "server-response",
-          rpcId: INVALID_REQUEST_RPC_ID,
-          result: {
-            ok: false,
-            error: {
-              code: "gateway/bad-request",
-              message: "invalid client-request message",
-              details: {}
-            }
-          }
-        });
-        return;
-      }
-      if (message.method !== endpoint) {
-        respond(res, {
-          type: "server-response",
-          rpcId: message.rpcId,
-          result: {
-            ok: false,
-            error: {
-              code: "gateway/bad-request",
-              message: `method ${JSON.stringify(message.method)} does not match endpoint ${JSON.stringify(endpoint)}`,
-              details: {}
-            }
-          }
-        });
-        return;
-      }
-      const abort = new AbortController();
-      res.on("close", () => {
-        if (!res.writableEnded) abort.abort();
+      res.on("error", () => {
       });
       try {
-        const result = await handler(endpoint, message.payload, abort.signal);
-        respond(res, { type: "server-response", rpcId: message.rpcId, result });
-      } catch (error) {
-        res.writeHead(500);
-        res.end(`handler failure: ${String(error)}`);
+        await dispatch(req, res);
+      } catch {
+        if (!res.writableEnded) {
+          try {
+            res.writeHead(500);
+            res.end("internal error");
+          } catch {
+          }
+        }
       }
     }
   };
+  async function dispatch(req, res) {
+    let rejection;
+    try {
+      rejection = fence(req);
+    } catch (error) {
+      options.onFenceError?.(error);
+      res.writeHead(403);
+      res.end("forbidden");
+      return;
+    }
+    if (rejection !== void 0) {
+      res.writeHead(rejection);
+      res.end(rejection === 401 ? "unauthorized" : "forbidden");
+      return;
+    }
+    const pathname = new URL(req.url ?? "/", "http://dsh.invalid").pathname;
+    const endpoint = channelEndpoint(channel, pathname);
+    if (req.method !== "POST" || endpoint === void 0) {
+      res.writeHead(404);
+      res.end("not found");
+      return;
+    }
+    const mediaType = req.headers["content-type"]?.split(";", 1)[0]?.trim().toLowerCase();
+    if (mediaType !== "application/json") {
+      res.writeHead(415);
+      res.end("content type must be application/json");
+      return;
+    }
+    const body = await readBody(req, res, maxBodyBytes);
+    if (body === void 0) return;
+    let parsed;
+    try {
+      parsed = JSON.parse(body.toString("utf8"));
+    } catch {
+      res.writeHead(400);
+      res.end("body is not JSON");
+      return;
+    }
+    const message = parseClientRequest(parsed);
+    if (message === void 0) {
+      respond(res, {
+        type: "server-response",
+        rpcId: INVALID_REQUEST_RPC_ID,
+        result: {
+          ok: false,
+          error: {
+            code: "gateway/bad-request",
+            message: "invalid client-request message",
+            details: {}
+          }
+        }
+      });
+      return;
+    }
+    if (message.method !== endpoint) {
+      respond(res, {
+        type: "server-response",
+        rpcId: message.rpcId,
+        result: {
+          ok: false,
+          error: {
+            code: "gateway/bad-request",
+            message: `method ${JSON.stringify(message.method)} does not match endpoint ${JSON.stringify(endpoint)}`,
+            details: {}
+          }
+        }
+      });
+      return;
+    }
+    const abort = new AbortController();
+    res.on("close", () => {
+      if (!res.writableEnded) abort.abort();
+    });
+    try {
+      const result = await handler(endpoint, message.payload, abort.signal);
+      respond(res, { type: "server-response", rpcId: message.rpcId, result });
+    } catch (error) {
+      res.writeHead(500);
+      res.end(`handler failure: ${String(error)}`);
+    }
+  }
 }
 function parseClientRequest(value) {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return void 0;
@@ -3375,8 +3398,11 @@ function apply(ctx, config) {
       // The channel rides the same trust fence and browser-session
       // authentication as `/api` (the plugin's proxy rewrites Host and
       // Origin to the loopback upstream, so proxied LAN traffic passes the
-      // Host fence exactly like the shared API channel).
+      // Host fence exactly like the shared API channel). A fence that
+      // throws refuses the request (fail closed) and is logged loudly —
+      // the channel must never silently open if the harness API moves.
       fence: (request) => ctx.connection.requestRejection(request),
+      onFenceError: (error) => log("error", `dsh-proxy: channel trust fence failed, request refused: ${String(error)}`),
       handler: async (endpoint, payload) => {
         if (endpoint === RPC_STATUS_ENDPOINT) {
           return { ok: true, value: await controller.refreshStatus() };
