@@ -2,6 +2,28 @@
 
 本文档记录 dsh-proxy 的用户可见变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## 0.1.3
+
+### 修复
+
+- **修复 harness 升级后插件无法加载的问题（`cannot get property "webServer" without inject`）。** 新版 harness 将 `client-connection` 的静态注入从 `['webServer', 'credentials']` 缩减为 `['credentials']`（`webServer` 改为可选，仅在存在 Web 服务器时才运行时注入），而经 `connection.rpc.handle` 挂载的 `/dsh-proxy` 通道内部要从 client-connection 插件自身的 fiber 查找 `webServer`——该查找在新版下走到根 fiber 并抛出此错误，插件条目无法激活。现在通道的物理路由由插件自持：直接注册在注入的 `ctx.webServer` 上（与 harness 自带 api-gateway 挂 upgrade 路由同一模式），envelope 解析、body 上限、断连中止一并收进插件，不再依赖 harness 的专属通道挂载实现。
+  - 涉及文件：`dsh-proxy/src/rpc-route.ts`（新增）、`dsh-proxy/src/index.ts`。
+
+### 变更
+
+- **`/dsh-proxy` 通道的信任策略与 `/api` 对齐。** 旧版通过 `rpc.handle` 的 `{ authority: 'loopback' }` 选项声明 loopback-only（该选项在新版 harness 中已被静默忽略，策略实际已失效）；现在每个请求先过 `ctx.connection.requestRejection`——Host/Origin 信任篱笆 + 浏览器会话认证。经代理的 LAN 流量因 Host/Origin 被改写为 loopback 上游照旧通过篱笆；首次访问需携带 `dsh web` 启动日志打印的 `?token=`（LAN 场景将其拼到代理地址之后），通过后浏览器会话 cookie 自动放行后续请求，与 Web UI 其余部分行为一致。
+  - 请求体上限 1 MiB（设置页 payload 远小于此）；信封级错误（方法/端点不匹配、非法信封）以 HTTP 200 + 错误 envelope 返回，浏览器端不会抛传输层错误。
+
+### 构建与工具链
+
+- pinned 开发类型包对齐到当前 harness 内置版本：`@deepseek-ai/dsh-*` 精确到 `0.1.6-alpha.2`（例外：`@deepseek-ai/dsh-client-runtime` 无该发布，停留在最新已发布的 `0.1.1-rc.2`，客户端仅使用其稳定面）、`@deepseek-ai/cordis@^4.0.2`、`@deepseek-ai/schemastery@^3.18.2`。
+- smoke 的插件契约阶段改为驱动**真实 bundled 路由**（fake `node:http` req/res）——旧 fake ctx 只捕获 handler 函数，恰好会掩蔽本次这类故障；新增 `DSH_SMOKE_SKIP_LIVE=1` 可只跑该阶段。
+
+### 验证
+
+- `pnpm run check` 通过：typecheck ✓、vitest 8 个文件 90 个用例 ✓（含新增 13 个通道路由用例）、esbuild 构建 ✓。
+- `DSH_SMOKE_SKIP_LIVE=1 node scripts/smoke.mjs`：插件契约阶段 14/14 通过（路由挂载、信任围栏、status/update/start/stop、设置持久化、错误 envelope）。
+
 ## 0.1.2
 
 ### 修复
