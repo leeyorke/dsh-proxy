@@ -2,6 +2,20 @@
 
 本文档记录 dsh-proxy 的用户可见变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## 0.1.6
+
+### 修复
+
+- **修复 0.1.5 引入的手机「发生了太多重定位」死循环。** harness 的 `authorizeIndex` 对**任何**带 token 的导航都走「铸 cookie + 303 到 `/`」分支（根本不看 cookie），而 0.1.5 的代理对每个 `/` GET 都重新代填 token，于是 303 → `/` → 再代填 → 303……无限循环。现在代填**每个浏览器会话只做一次**：交换完成后代理签发入口标记 cookie（`dsh_proxy_entry`，会话级），后续入口导航不再代填，浏览器带 cookie 走干净 URL 直达应用。
+  - **自愈**：标记仍在但 harness 会话已失效（30 天 cookie 过期）时，入口 401 会让代理当场把标记置为过期（`Max-Age=0`），下一次导航自动重跑交换，不会把用户永久卡在 401。
+  - 涉及文件：`dsh-proxy/src/session.ts`（标记 cookie 助手）、`dsh-proxy/src/proxy.ts`（注入条件 + proxyRes 簿记；标记合并进上游响应的 cookie 列表——http-proxy 的 `writeHeaders` 会整体替换 `res.setHeader` 的 set-cookie）。
+
+### 验证
+
+- `pnpm run check` 通过：typecheck ✓、vitest 8 个文件 98 个用例 ✓（新增「跟进不重复代填」与「标记自愈」回归用例）、esbuild 构建 ✓。
+- `DSH_SMOKE_SKIP_LIVE=1 node scripts/smoke.mjs`：21/21 通过——契约阶段以本地 fake upstream 复现浏览器完整往返（303 → 带 cookie 跟进 → 200）。
+- **真实 harness 端到端验证**：第二个 dsh web 实例（3319 端口 + 本地插件）实测——入口 303（真实 cookie，authority 为改写后的 `127.0.0.1:3319`）→ 跟进拿到 32KB 真实应用外壳 → 再次进入 200 不再跳转；无 cookie 访问 `/api` 得 401（围栏生效），无 Basic 得 401（代理门禁生效）。
+
 ## 0.1.5
 
 ### 修复

@@ -90,7 +90,7 @@ pnpm run smoke   # 对正在运行的 DSH（127.0.0.1:3080）做全流程冒烟�
 - **启用条件**：`username` 与 `password` **同时非空**才启用密码登录（默认均为空 = 开放访问）；只设置其一仍保持关闭。
 - **认证方式**：HTTP Basic Auth，浏览器原生弹窗——未认证的**任何**请求（页面、`/api/*`、脚本）→ **401 + `WWW-Authenticate: Basic realm="dsh-proxy"`**；WebSocket 拒绝同样带挑战头。登录成功后浏览器按站点缓存凭据，后续请求（含 WS 握手）自动携带。**没有自绘登录页、没有会话 Cookie。**
 - **公开静态文件**：`/manifest.webmanifest` 与 `/favicon.svg` 免认证——浏览器会在不带凭据的上下文（PWA 清单、图标）拉取它们，强制认证会 401。
-- **harness 浏览器会话**：DSH 0.1.6-alpha+ 的首页与 `/api` 要求浏览器会话 cookie。代理在入口导航代填进程 launch token 完成这一次性换取（上游以 303 + Set-Cookie 应答，token 不暴露给客户端）；Basic 认证仍是整个 LAN 面的唯一闸门——会话是在闸门之后替访客取得的。设置页的 `/dsh-proxy` 通道同样要求该会话，经代理访问时随 cookie 一并通过。
+- **harness 浏览器会话**：DSH 0.1.6-alpha+ 的首页与 `/api` 要求浏览器会话 cookie。代理在入口导航代填进程 launch token 完成这一次性换取（上游以 303 + Set-Cookie 应答，token 不暴露给客户端）；**代填每个浏览器会话只发生一次**（入口标记 cookie 防止把 303 跳转变成死循环），harness 会话失效后下一次导航会自动重取。Basic 认证仍是整个 LAN 面的唯一闸门——会话是在闸门之后替访客取得的。设置页的 `/dsh-proxy` 通道同样要求该会话，经代理访问时随 cookie 一并通过。
 - 凭据比较用常量时间（`timingSafeEqual`）。
 
 ## 安全提示
