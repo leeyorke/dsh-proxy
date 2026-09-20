@@ -78,6 +78,30 @@ export function sessionCookieHeader(token: string): string {
   return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax`
 }
 
+/**
+ * Cookie name marking that the entry browser-session exchange (the
+ * harness's one-time `?token=` navigation) already completed for this
+ * client. Without the mark the proxy would re-append the token to every
+ * `/` GET, and the harness answers every token navigation with a 303 back
+ * to `/` — an infinite redirect loop.
+ */
+export const ENTRY_COOKIE = 'dsh_proxy_entry'
+
+/**
+ * The Set-Cookie value for the entry-exchange mark. A browser-session
+ * cookie like the session capability: once it is gone the next entry
+ * navigation re-runs the exchange, so a stale mark can never wedge a
+ * visitor out. `maxAgeSeconds` of 0 expires it immediately, used to
+ * self-heal when the harness session behind the mark has died.
+ * @param maxAgeSeconds - when given, the cookie's Max-Age (0 = expire now).
+ * @returns the full Set-Cookie header value.
+ */
+export function entryCookieHeader(maxAgeSeconds?: number): string {
+  const attrs = [`${ENTRY_COOKIE}=1`, 'Path=/', 'HttpOnly', 'SameSite=Lax']
+  if (maxAgeSeconds !== undefined) attrs.push(`Max-Age=${String(maxAgeSeconds)}`)
+  return attrs.join('; ')
+}
+
 /** The proxy's gate: Basic Auth only, active when both credentials are set. */
 export class Authenticator {
   constructor(readonly config: AuthConfig) {}

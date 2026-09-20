@@ -194,6 +194,13 @@ async function pluginContractPhase() {
         res.end()
         return
       }
+      // authorizeIndex's other half: a valid session cookie serves the index
+      // — this is the redirect follow-up a real browser makes.
+      if ((req.headers.cookie ?? '').includes('dsh-auth-')) {
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+        res.end('<!doctype html><title>dsh</title>')
+        return
+      }
       res.writeHead(401, { 'content-type': 'text/plain; charset=utf-8' })
       res.end('dsh web authentication required; reopen the URL printed by dsh web.\n')
       return
@@ -409,20 +416,59 @@ async function pluginContractPhase() {
     const logText = pluginLogs.map(([, message]) => message).join('\n')
     const ports = [...logText.matchAll(/本机访问 http:\/\/127\.0\.0\.1:(\d+)/g)].map((match) => match[1])
     const proxyPort = ports.at(-1)
-    const entry = async (path) => {
+    const entry = async (path, cookie) => {
       const res = await fetch(`http://127.0.0.1:${proxyPort}${path}`, {
         redirect: 'manual',
-        headers: { authorization: `Basic ${Buffer.from('smoke-user:smoke-pass').toString('base64')}` },
+        headers: {
+          authorization: `Basic ${Buffer.from('smoke-user:smoke-pass').toString('base64')}`,
+          ...cookie === undefined ? {} : { cookie },
+        },
       })
-      return { status: res.status, setCookie: res.headers.get('set-cookie') }
+      return {
+        status: res.status,
+        setCookie: res.headers.getSetCookie?.() ?? [],
+      }
     }
     const entered = await entry('/')
     check(
       'entry navigation carries the launch token and passes the session exchange',
-      entered.status === 303 && entered.setCookie?.includes('dsh-auth-') === true
+      entered.status === 303
+        && entered.setCookie.some((value) => value.startsWith('dsh-auth-')) === true
+        && entered.setCookie.some((value) => value.startsWith('dsh_proxy_entry=1')) === true
         && new URL(upstreamSeen.indexUrl ?? '', 'http://up').searchParams.get('token') === LAUNCH_TOKEN,
       JSON.stringify({ entered, upstreamSeen }),
     )
+
+    // The redirect follow-up, exactly like the phone's browser: cookies in
+    // hand, no token in the URL. The harness answers EVERY token navigation
+    // with a 303 back to `/`, so re-injecting here would loop forever.
+    const jar = entered.setCookie.map((value) => value.split(';', 1)[0]).join('; ')
+    upstreamSeen.indexUrl = undefined
+    const followed = await entry('/', jar)
+    check(
+      'the redirect follow-up is not re-injected (no redirect loop)',
+      followed.status === 200 && upstreamSeen.indexUrl === '/',
+      JSON.stringify({ followed, upstreamSeen }),
+    )
+
+    // A stale mark (harness session gone) must retire itself so the next
+    // navigation re-runs the exchange instead of failing forever.
+    const stale = await entry('/', 'dsh_proxy_entry=1')
+    check(
+      'a stale entry mark self-expires when the session behind it is gone',
+      stale.status === 401
+        && stale.setCookie.some((value) => /^dsh_proxy_entry=1;.*Max-Age=0/.test(value)) === true,
+      JSON.stringify(stale),
+    )
+    upstreamSeen.indexUrl = undefined
+    const retried = await entry('/')
+    check(
+      'after the mark expires the entry re-runs the exchange',
+      retried.status === 303
+        && new URL(upstreamSeen.indexUrl ?? '', 'http://up').searchParams.get('token') === LAUNCH_TOKEN,
+      JSON.stringify({ retried, upstreamSeen }),
+    )
+
     await entry('/?token=caller-token')
     check(
       'a caller-supplied token is never overwritten',

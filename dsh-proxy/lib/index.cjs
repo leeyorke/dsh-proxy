@@ -2674,6 +2674,12 @@ function readCookie(header, name2) {
 function sessionCookieHeader(token) {
   return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax`;
 }
+var ENTRY_COOKIE = "dsh_proxy_entry";
+function entryCookieHeader(maxAgeSeconds) {
+  const attrs = [`${ENTRY_COOKIE}=1`, "Path=/", "HttpOnly", "SameSite=Lax"];
+  if (maxAgeSeconds !== void 0) attrs.push(`Max-Age=${String(maxAgeSeconds)}`);
+  return attrs.join("; ");
+}
 var Authenticator = class {
   constructor(config) {
     this.config = config;
@@ -2762,6 +2768,12 @@ function startLanProxy(options) {
   const auth = new Authenticator({ username, password });
   const sessionToken = mintSessionToken();
   const isRequestAuthenticated = (req) => auth.isAuthenticated(req.headers.authorization) || safeEqual(readCookie(req.headers.cookie, SESSION_COOKIE) ?? "", sessionToken);
+  const entryInjected = /* @__PURE__ */ new WeakSet();
+  const withResponseCookies = (proxyRes, extra2) => {
+    const existing = proxyRes.headers["set-cookie"];
+    const cookies = Array.isArray(existing) ? [...existing] : existing === void 0 ? [] : [String(existing)];
+    proxyRes.headers["set-cookie"] = [...cookies, ...extra2];
+  };
   const proxy = import_http_proxy.default.createProxyServer({
     target: targetOrigin,
     ws: true,
@@ -2825,6 +2837,20 @@ function startLanProxy(options) {
       return callback === void 0 ? origEnd(Buffer.from(code)) : origEnd(Buffer.from(code), callback);
     };
   });
+  proxy.on("proxyRes", (proxyRes, req) => {
+    const injected = entryInjected.delete(req);
+    const status = proxyRes.statusCode ?? 0;
+    const isEntry = new URL(req.url ?? "/", "http://proxy.local").pathname === "/";
+    if (injected) {
+      if (isEntry && (status === 303 || status === 200)) {
+        withResponseCookies(proxyRes, [entryCookieHeader()]);
+      }
+      return;
+    }
+    if (status === 401 && isEntry && readCookie(req.headers.cookie, ENTRY_COOKIE) !== void 0) {
+      withResponseCookies(proxyRes, [entryCookieHeader(0)]);
+    }
+  });
   const alignOrigin = (req) => {
     if (req.headers.origin) req.headers.origin = targetOrigin;
   };
@@ -2852,9 +2878,10 @@ function startLanProxy(options) {
     }
     if (indexToken !== void 0 && req.method === "GET" && pathname === "/") {
       const url = new URL(req.url ?? "/", "http://proxy.local");
-      if (!url.searchParams.has("token")) {
+      if (!url.searchParams.has("token") && readCookie(req.headers.cookie, ENTRY_COOKIE) === void 0) {
         url.searchParams.set("token", indexToken);
         req.url = `${url.pathname}${url.search}`;
+        entryInjected.add(req);
       }
     }
     alignOrigin(req);

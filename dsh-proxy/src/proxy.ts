@@ -44,7 +44,7 @@ import type { Duplex } from 'node:stream'
 import net from 'node:net'
 import os from 'node:os'
 import httpProxy from 'http-proxy'
-import { Authenticator, SESSION_COOKIE, mintSessionToken, readCookie, safeEqual, sessionCookieHeader } from './session.ts'
+import { Authenticator, SESSION_COOKIE, ENTRY_COOKIE, entryCookieHeader, mintSessionToken, readCookie, safeEqual, sessionCookieHeader } from './session.ts'
 import { injectPolyfill, RANDOM_UUID_POLYFILL } from './polyfill.ts'
 import { isJavaScriptContentType, patchClientScript } from './clientpatch.ts'
 
@@ -127,6 +127,18 @@ export function startLanProxy(options: LanProxyOptions): LanProxyHandle {
   const isRequestAuthenticated = (req: http.IncomingMessage): boolean =>
     auth.isAuthenticated(req.headers.authorization)
     || safeEqual(readCookie(req.headers.cookie, SESSION_COOKIE) ?? '', sessionToken)
+
+  // Entry navigations this proxy token-injected, so the proxyRes hook below
+  // can mark the client once the harness completed the exchange. Keyed by
+  // request object: http-proxy hands both hooks the same instance.
+  const entryInjected = new WeakSet<http.IncomingMessage>()
+
+  /** Merge extra Set-Cookie values into an upstream response's cookie list. */
+  const withResponseCookies = (proxyRes: http.IncomingMessage, extra: string[]): void => {
+    const existing = proxyRes.headers['set-cookie']
+    const cookies = Array.isArray(existing) ? [...existing] : existing === undefined ? [] : [String(existing)]
+    proxyRes.headers['set-cookie'] = [...cookies, ...extra]
+  }
 
   const proxy = httpProxy.createProxyServer({
     target: targetOrigin,
@@ -215,6 +227,33 @@ export function startLanProxy(options: LanProxyOptions): LanProxyHandle {
     }
   })
 
+  // Entry-exchange bookkeeping (see the injection in the request handler).
+  // The mark rides in the upstream response's own cookie list because
+  // http-proxy's writeHeaders replaces res.setHeader values wholesale.
+  proxy.on('proxyRes', (proxyRes, req) => {
+    const injected = entryInjected.delete(req)
+    const status = proxyRes.statusCode ?? 0
+    const isEntry = new URL(req.url ?? '/', 'http://proxy.local').pathname === '/'
+    if (injected) {
+      // The exchange completed only when the harness answered the token
+      // navigation (303 + Set-Cookie; 200 if a future harness serves the
+      // index directly). Anything else leaves the client unmarked so the
+      // next entry navigation simply retries.
+      if (isEntry && (status === 303 || status === 200)) {
+        withResponseCookies(proxyRes, [entryCookieHeader()])
+      }
+      return
+    }
+    // Not ours: the only reason to touch the response is a stale mark — the
+    // client completed the exchange before, but the harness session behind
+    // it is gone (the 30-day cookie expired) and the entry is now refused.
+    // Expire the mark so the next navigation re-runs the exchange instead
+    // of failing forever.
+    if (status === 401 && isEntry && readCookie(req.headers.cookie, ENTRY_COOKIE) !== undefined) {
+      withResponseCookies(proxyRes, [entryCookieHeader(0)])
+    }
+  })
+
   const alignOrigin = (req: http.IncomingMessage): void => {
     if (req.headers.origin) req.headers.origin = targetOrigin
   }
@@ -259,12 +298,17 @@ export function startLanProxy(options: LanProxyOptions): LanProxyHandle {
     // `?token=` exchange (303 + session cookie). Append the launch token to
     // the entry navigation only — the request already passed the Basic Auth
     // gate above, the token is consumed upstream and never echoed to the
-    // client, and a caller-supplied token is never overwritten.
+    // client, and a caller-supplied token is never overwritten. The entry
+    // mark makes it exactly once per browser session: the harness answers
+    // EVERY token navigation with a 303 back to `/`, so re-appending on the
+    // follow-up request would loop forever.
     if (indexToken !== undefined && req.method === 'GET' && pathname === '/') {
       const url = new URL(req.url ?? '/', 'http://proxy.local')
-      if (!url.searchParams.has('token')) {
+      if (!url.searchParams.has('token')
+        && readCookie(req.headers.cookie, ENTRY_COOKIE) === undefined) {
         url.searchParams.set('token', indexToken)
         req.url = `${url.pathname}${url.search}`
+        entryInjected.add(req)
       }
     }
     alignOrigin(req)

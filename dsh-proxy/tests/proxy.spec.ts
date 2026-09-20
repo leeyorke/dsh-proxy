@@ -264,6 +264,13 @@ describe('launch-token entry injection (harness browser-session login)', () => {
           res.end()
           return
         }
+        // authorizeIndex's other half: a valid session cookie serves the
+        // index — this is the redirect follow-up a real browser makes.
+        if ((req.headers.cookie ?? '').includes('dsh-auth-')) {
+          res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+          res.end(UPSTREAM_HTML)
+          return
+        }
         res.writeHead(401, { 'content-type': 'text/plain; charset=utf-8' })
         res.end('dsh web authentication required; reopen the URL printed by dsh web.\n')
         return
@@ -307,12 +314,48 @@ describe('launch-token entry injection (harness browser-session login)', () => {
   it('appends the launch token to the entry navigation and passes the session exchange through', async () => {
     const res = await fetch(`${entry.origin}/`, { headers: { authorization: basic() }, redirect: 'manual' })
     // The visitor sees the harness's own 303 + session cookie — no token, no
-    // extra round trip, no manual URL.
+    // extra round trip, no manual URL — plus the proxy's entry mark.
     expect(res.status).toBe(303)
-    expect(res.headers.get('set-cookie')).toContain('dsh-auth-')
+    const cookies = res.headers.getSetCookie()
+    expect(cookies.some((cookie) => cookie.startsWith('dsh-auth-'))).toBe(true)
+    expect(cookies.some((cookie) => cookie.startsWith('dsh_proxy_entry=1'))).toBe(true)
     const seen = new URL(entry.seen.indexUrl ?? '', 'http://up')
     expect(seen.pathname).toBe('/')
     expect(seen.searchParams.get('token')).toBe(TOKEN)
+  })
+
+  it('does not re-inject on the redirect follow-up (the loop the phone hit)', async () => {
+    // The harness answers EVERY token navigation with a 303 back to `/`, so
+    // re-appending the token after the exchange would redirect forever.
+    const first = await fetch(`${entry.origin}/`, { headers: { authorization: basic() }, redirect: 'manual' })
+    expect(first.status).toBe(303)
+    const cookie = first.headers.getSetCookie().map((value) => value.split(';', 1)[0]).join('; ')
+    entry.seen.indexUrl = undefined
+    const second = await fetch(`${entry.origin}/`, { headers: { authorization: basic(), cookie }, redirect: 'manual' })
+    expect(second.status).toBe(200)
+    // The follow-up carried the session, so the proxy left the URL clean and
+    // the upstream served the index instead of minting again.
+    expect(entry.seen.indexUrl).toBe('/')
+    expect(new URL(`http://up${entry.seen.indexUrl}`).searchParams.get('token')).toBeNull()
+  })
+
+  it('self-heals a stale mark when the harness session behind it is gone', async () => {
+    // The 30-day harness cookie expired while the browser-session mark lived
+    // on: the entry is refused, and the proxy must retire the mark so the
+    // next navigation re-runs the exchange instead of failing forever.
+    const stale = await fetch(`${entry.origin}/`, {
+      headers: { authorization: basic(), cookie: 'dsh_proxy_entry=1' },
+      redirect: 'manual',
+    })
+    expect(stale.status).toBe(401)
+    const cookies = stale.headers.getSetCookie()
+    expect(cookies.some((cookie) => /^dsh_proxy_entry=1;.*Max-Age=0/.test(cookie))).toBe(true)
+
+    // With the mark gone the next entry navigation injects again.
+    entry.seen.indexUrl = undefined
+    const retry = await fetch(`${entry.origin}/`, { headers: { authorization: basic() }, redirect: 'manual' })
+    expect(retry.status).toBe(303)
+    expect(new URL(`http://up${entry.seen.indexUrl}`).searchParams.get('token')).toBe(TOKEN)
   })
 
   it('never overwrites a caller-supplied token', async () => {
