@@ -31,7 +31,8 @@ netsh advfirewall firewall add rule name="dsh-proxy" dir=in action=allow protoco
 # Remove the plugin
 dsh plugin --profile web rm leeyorke/dsh-proxy
 
-# Update the plugin
-dsh plugin --profile web up github:leeyorke/dsh-proxy#master
+# Update the plugin (use add, not up: pnpm's up does not re-resolve git
+# branch refs and silently keeps the old commit; add fetches the branch head)
+dsh plugin --profile web add github:leeyorke/dsh-proxy#master
 
 ```

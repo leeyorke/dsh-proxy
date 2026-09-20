@@ -31,7 +31,8 @@ netsh advfirewall firewall add rule name="dsh-proxy" dir=in action=allow protoco
 # 删除插件
 dsh plugin --profile web remove leeyorke/dsh-proxy
 
-# 更新插件
-dsh plugin --profile web up github:leeyorke/dsh-proxy#master
+# 更新插件（用 add，不要用 up：pnpm 的 up 不重新解析 git 分支引用，
+# 会静默保持旧提交；add 才会拉取分支最新头）
+dsh plugin --profile web add github:leeyorke/dsh-proxy#master
 
 ```
