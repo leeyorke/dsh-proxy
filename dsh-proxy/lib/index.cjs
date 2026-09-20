@@ -2754,6 +2754,7 @@ function startLanProxy(options) {
     upstreamPort,
     username,
     password,
+    indexToken,
     log = () => {
     }
   } = options;
@@ -2848,6 +2849,13 @@ function startLanProxy(options) {
     }
     if (auth.enabled && auth.isAuthenticated(req.headers.authorization)) {
       res.setHeader("set-cookie", sessionCookieHeader(sessionToken));
+    }
+    if (indexToken !== void 0 && req.method === "GET" && pathname === "/") {
+      const url = new URL(req.url ?? "/", "http://proxy.local");
+      if (!url.searchParams.has("token")) {
+        url.searchParams.set("token", indexToken);
+        req.url = `${url.pathname}${url.search}`;
+      }
     }
     alignOrigin(req);
     proxy.web(req, res);
@@ -3041,6 +3049,7 @@ var ProxyController = class {
       upstreamPort: this.options.upstreamPort,
       username: this.options.username,
       password: this.options.password,
+      indexToken: this.options.indexToken,
       log
     });
     this.handle = handle;
@@ -3368,6 +3377,19 @@ var Config = Schema.object({
   username: Schema.string().default(""),
   password: Schema.string().default("")
 });
+function readLaunchToken(ctx, log) {
+  try {
+    const token = new URL(ctx.connection.authenticatedUrl("http://127.0.0.1/")).searchParams.get("token");
+    if (token === null) {
+      log("warn", "dsh-proxy: the harness exposed no launch token \u2014 LAN visitors must open the ?token= URL printed by dsh web once");
+      return void 0;
+    }
+    return token;
+  } catch (error) {
+    log("warn", `dsh-proxy: cannot read the harness launch token (${String(error)}) \u2014 LAN visitors must open the ?token= URL printed by dsh web once`);
+    return void 0;
+  }
+}
 function apply(ctx, config) {
   const resolved = Config(config ?? {});
   const log = (level, message) => {
@@ -3380,7 +3402,8 @@ function apply(ctx, config) {
       upstreamHost: resolved.upstreamHost,
       upstreamPort: resolved.upstreamPort || ctx.webServer.port || 3080,
       username: resolved.username,
-      password: resolved.password
+      password: resolved.password,
+      indexToken: readLaunchToken(ctx, log)
     },
     settingsFile: dshHomePath("dsh-proxy.json"),
     log

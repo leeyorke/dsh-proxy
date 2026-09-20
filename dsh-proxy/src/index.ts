@@ -65,6 +65,33 @@ export const Config = z.object({
 })
 
 /**
+ * Read the harness process launch token through Connection's public helper.
+ *
+ * The harness gates the index behind a one-time `?token=` exchange that
+ * mints the browser session; the proxy appends this token to the entry
+ * navigation so LAN visitors get in with Basic Auth alone (the token is
+ * consumed upstream and never reaches the client). A harness without the
+ * helper — older or newer — degrades to the manual flow (open the printed
+ * `?token=` URL once) with a warning instead of failing the load.
+ * @param ctx - host cordis context.
+ * @param log - plugin log sink.
+ * @returns the launch token, or undefined when unavailable.
+ */
+function readLaunchToken(ctx: Context, log: (level: 'info' | 'warn' | 'error', message: string) => void): string | undefined {
+  try {
+    const token = new URL(ctx.connection.authenticatedUrl('http://127.0.0.1/')).searchParams.get('token')
+    if (token === null) {
+      log('warn', 'dsh-proxy: the harness exposed no launch token — LAN visitors must open the ?token= URL printed by dsh web once')
+      return undefined
+    }
+    return token
+  } catch (error) {
+    log('warn', `dsh-proxy: cannot read the harness launch token (${String(error)}) — LAN visitors must open the ?token= URL printed by dsh web once`)
+    return undefined
+  }
+}
+
+/**
  * Mount the proxy and the RPC channel as effects on this plugin's fiber:
  * unloading the plugin closes the listener, every upgraded socket, and the
  * channel.
@@ -84,6 +111,7 @@ export function apply(ctx: Context, config?: Config): void {
       upstreamPort: resolved.upstreamPort || ctx.webServer.port || 3080,
       username: resolved.username,
       password: resolved.password,
+      indexToken: readLaunchToken(ctx, log),
     },
     settingsFile: dshHomePath('dsh-proxy.json'),
     log,

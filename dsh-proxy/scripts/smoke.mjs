@@ -10,6 +10,7 @@
  * Set DSH_SMOKE_SKIP_LIVE=1 to run only the plugin-contract phase (no live
  * DSH needed — drives the bundled apply() with a fake ctx).
  */
+import http from 'node:http'
 import net from 'node:net'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -178,14 +179,50 @@ async function pluginContractPhase() {
 
   const tempHome = mkdtempSync(join(tmpdir(), 'dsh-proxy-smoke-'))
   process.env.DSH_HOME = tempHome
+  // A local stand-in for the harness web app, mimicking the two gates the
+  // proxy must satisfy: the index browser-session exchange (authorizeIndex:
+  // 401 without the launch token, 303 + session cookie with it) and a
+  // reachable favicon for the status probe.
+  const LAUNCH_TOKEN = 'smoke-launch-token'
+  const upstreamSeen = { indexUrl: undefined, apiUrl: undefined }
+  const fakeUpstream = http.createServer((req, res) => {
+    const url = new URL(req.url ?? '/', 'http://up')
+    if (url.pathname === '/') {
+      upstreamSeen.indexUrl = req.url
+      if (url.searchParams.get('token') === LAUNCH_TOKEN) {
+        res.writeHead(303, { location: '/', 'set-cookie': 'dsh-auth-x=v1; Path=/; HttpOnly' })
+        res.end()
+        return
+      }
+      res.writeHead(401, { 'content-type': 'text/plain; charset=utf-8' })
+      res.end('dsh web authentication required; reopen the URL printed by dsh web.\n')
+      return
+    }
+    if (url.pathname === '/favicon.svg') {
+      res.writeHead(200, { 'content-type': 'image/svg+xml' })
+      res.end('<svg xmlns="http://www.w3.org/2000/svg"/>')
+      return
+    }
+    if (url.pathname === '/api/state') {
+      upstreamSeen.apiUrl = req.url
+      res.writeHead(200, { 'content-type': 'application/json' })
+      res.end('{}')
+      return
+    }
+    res.writeHead(404)
+    res.end('not found')
+  })
+  await new Promise((resolve) => fakeUpstream.listen(0, '127.0.0.1', resolve))
+  const fakeUpstreamPort = fakeUpstream.address().port
   try {
     let registeredRoute = null
     let fenceReject = 0
     const fenceCalls = []
     const effectFns = []
+    const pluginLogs = []
     const fakeCtx = {
       webServer: {
-        port: UPSTREAM,
+        port: fakeUpstreamPort,
         host: '127.0.0.1',
         register: (route) => {
           registeredRoute = route
@@ -197,11 +234,12 @@ async function pluginContractPhase() {
           fenceCalls.push(request)
           return fenceReject === 0 ? undefined : fenceReject
         },
+        authenticatedUrl: (base) => `${base}${base.includes('?') ? '&' : '?'}token=${LAUNCH_TOKEN}`,
       },
       logger: {
-        info: (message) => console.log(`  [plugin:info] ${message}`),
-        warn: (message) => console.log(`  [plugin:warn] ${message}`),
-        error: (message) => console.log(`  [plugin:error] ${message}`),
+        info: (message) => { pluginLogs.push(['info', message]); console.log(`  [plugin:info] ${message}`) },
+        warn: (message) => { pluginLogs.push(['warn', message]); console.log(`  [plugin:warn] ${message}`) },
+        error: (message) => { pluginLogs.push(['error', message]); console.log(`  [plugin:error] ${message}`) },
       },
       effect: (fn) => {
         effectFns.push(fn)
@@ -211,6 +249,11 @@ async function pluginContractPhase() {
     plugin.apply(fakeCtx, { listenHost: '127.0.0.1', listenPort: 0 })
     const proxyDisposer = await effectFns[0]()
     const rpcCleanup = effectFns[1]()
+    check(
+      'launch token acquired from Connection (no manual-URL warning)',
+      pluginLogs.every(([level, message]) => !(level === 'warn' && /launch token/.test(message))),
+      JSON.stringify(pluginLogs.filter(([level, message]) => level === 'warn' && /launch token/.test(message))),
+    )
     check(
       'RPC channel mounted as a prefix route on the web server',
       registeredRoute?.kind === 'prefix' && registeredRoute?.path === '/dsh-proxy',
@@ -357,11 +400,51 @@ async function pluginContractPhase() {
       JSON.stringify(mismatch),
     )
 
+    // Entry-navigation token injection, end to end through the bundled
+    // plugin: the proxy is really listening (its port comes from the
+    // plugin's own log — the LAST one, after the stop/start cycle above
+    // rebound it), the fake upstream is the harness's index gate. The
+    // restart above left password login on (smoke-user/smoke-pass), so the
+    // entry fetches carry Basic credentials like a real LAN browser.
+    const logText = pluginLogs.map(([, message]) => message).join('\n')
+    const ports = [...logText.matchAll(/本机访问 http:\/\/127\.0\.0\.1:(\d+)/g)].map((match) => match[1])
+    const proxyPort = ports.at(-1)
+    const entry = async (path) => {
+      const res = await fetch(`http://127.0.0.1:${proxyPort}${path}`, {
+        redirect: 'manual',
+        headers: { authorization: `Basic ${Buffer.from('smoke-user:smoke-pass').toString('base64')}` },
+      })
+      return { status: res.status, setCookie: res.headers.get('set-cookie') }
+    }
+    const entered = await entry('/')
+    check(
+      'entry navigation carries the launch token and passes the session exchange',
+      entered.status === 303 && entered.setCookie?.includes('dsh-auth-') === true
+        && new URL(upstreamSeen.indexUrl ?? '', 'http://up').searchParams.get('token') === LAUNCH_TOKEN,
+      JSON.stringify({ entered, upstreamSeen }),
+    )
+    await entry('/?token=caller-token')
+    check(
+      'a caller-supplied token is never overwritten',
+      new URL(upstreamSeen.indexUrl ?? '', 'http://up').searchParams.get('token') === 'caller-token',
+      upstreamSeen.indexUrl,
+    )
+    const api = await entry('/api/state')
+    check(
+      'non-entry paths carry no token',
+      api.status === 200 && upstreamSeen.apiUrl === '/api/state',
+      JSON.stringify({ api, upstreamSeen }),
+    )
+
     rpcCleanup()
     await proxyDisposer()
   } finally {
     delete process.env.DSH_HOME
     rmSync(tempHome, { recursive: true, force: true })
+    await new Promise((resolve) => {
+      fakeUpstream.closeAllConnections()
+      fakeUpstream.close(() => resolve())
+    })
   }
 }
 

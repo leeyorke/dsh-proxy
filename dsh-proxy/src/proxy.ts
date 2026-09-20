@@ -28,6 +28,16 @@
  * traffic as loopback to the server-side fence, so withholding only the
  * client-side alignment would leave the UI degraded while the wire stayed
  * fully open. Basic Auth remains the one security barrier for the surface.
+ *
+ * A fifth fix (dsh 0.1.6-alpha+) carries the harness's browser-session
+ * login: the index is gated behind a one-time `?token=` exchange that mints
+ * a session cookie, so a bare LAN navigation would 401 with "web
+ * authentication required". The proxy appends the process launch token to
+ * the entry navigation of an already Basic-authenticated request; the token
+ * is consumed upstream (which answers 303 to the clean path) and never
+ * reaches the client, and a caller-supplied token is left untouched. Basic
+ * Auth therefore remains the single barrier — the session is derived behind
+ * it, exactly like the pre-browser-auth behavior LAN users expect.
  */
 import http from 'node:http'
 import type { Duplex } from 'node:stream'
@@ -51,6 +61,14 @@ export interface LanProxyOptions {
   username: string
   /** Basic Auth password; password login is enabled only when both it and `username` are set. */
   password: string
+  /**
+   * Process launch token the harness's index login exchanges for a browser
+   * session. When set, the proxy appends it to the entry navigation so LAN
+   * visitors get in with Basic Auth alone; absent (older harness or unreadable
+   * token) the request is forwarded untouched and visitors fall back to the
+   * printed `?token=` URL.
+   */
+  indexToken?: string
   /** Optional sink for human-readable lifecycle messages. */
   log?: (level: 'info' | 'warn' | 'error', message: string) => void
 }
@@ -94,6 +112,7 @@ export function startLanProxy(options: LanProxyOptions): LanProxyHandle {
     upstreamPort,
     username,
     password,
+    indexToken,
     log = () => {},
   } = options
   const targetOrigin = `http://${upstreamHost}:${upstreamPort}`
@@ -235,6 +254,18 @@ export function startLanProxy(options: LanProxyOptions): LanProxyHandle {
     // nothing to gate and no cookie is issued.
     if (auth.enabled && auth.isAuthenticated(req.headers.authorization)) {
       res.setHeader('set-cookie', sessionCookieHeader(sessionToken))
+    }
+    // Browser-session login: the harness gates the index behind a one-time
+    // `?token=` exchange (303 + session cookie). Append the launch token to
+    // the entry navigation only — the request already passed the Basic Auth
+    // gate above, the token is consumed upstream and never echoed to the
+    // client, and a caller-supplied token is never overwritten.
+    if (indexToken !== undefined && req.method === 'GET' && pathname === '/') {
+      const url = new URL(req.url ?? '/', 'http://proxy.local')
+      if (!url.searchParams.has('token')) {
+        url.searchParams.set('token', indexToken)
+        req.url = `${url.pathname}${url.search}`
+      }
     }
     alignOrigin(req)
     proxy.web(req, res)

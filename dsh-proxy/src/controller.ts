@@ -18,6 +18,12 @@ export interface EffectiveProxyOptions {
   upstreamPort: number
   username: string
   password: string
+  /**
+   * Harness launch token for the index browser-session exchange; forwarded
+   * to the entry navigation so LAN visitors log in with Basic Auth alone.
+   * Runtime-only (never persisted).
+   */
+  indexToken?: string
 }
 
 export interface ProxyControllerOptions {
@@ -87,6 +93,7 @@ export class ProxyController {
       upstreamPort: this.options.upstreamPort,
       username: this.options.username,
       password: this.options.password,
+      indexToken: this.options.indexToken,
       log,
     })
     this.handle = handle

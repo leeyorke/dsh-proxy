@@ -11,6 +11,14 @@ export interface LanProxyOptions {
     username: string;
     /** Basic Auth password; password login is enabled only when both it and `username` are set. */
     password: string;
+    /**
+     * Process launch token the harness's index login exchanges for a browser
+     * session. When set, the proxy appends it to the entry navigation so LAN
+     * visitors get in with Basic Auth alone; absent (older harness or unreadable
+     * token) the request is forwarded untouched and visitors fall back to the
+     * printed `?token=` URL.
+     */
+    indexToken?: string;
     /** Optional sink for human-readable lifecycle messages. */
     log?: (level: 'info' | 'warn' | 'error', message: string) => void;
 }

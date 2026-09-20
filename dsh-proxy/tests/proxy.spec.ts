@@ -20,7 +20,7 @@ interface World {
   proxy: LanProxyHandle
   proxyPort: number
   targetOrigin: string
-  seen: { host?: string; origin?: string }
+  seen: { host?: string; origin?: string; indexUrl?: string }
 }
 
 let world: World
@@ -33,6 +33,12 @@ beforeEach(async () => {
 
   upstream = http.createServer((req, res) => {
     const pathname = new URL(req.url ?? '/', 'http://up').pathname
+    if (pathname === '/') {
+      seen.indexUrl = req.url
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+      res.end(UPSTREAM_HTML)
+      return
+    }
     if (pathname === '/api/state') {
       seen.host = req.headers.host
       seen.origin = req.headers.origin
@@ -235,5 +241,107 @@ describe('websocket', () => {
       ws.on('error', () => { /* unexpected-response path */ })
     })
     expect(status).toBe(401)
+  })
+})
+
+describe('launch-token entry injection (harness browser-session login)', () => {
+  const TOKEN = 'launch-token-abc123'
+  let entry: { origin: string; seen: { indexUrl?: string; apiUrl?: string } }
+  let entryCleanup: (() => Promise<void>)[]
+
+  beforeEach(async () => {
+    entryCleanup = []
+    const seen: { indexUrl?: string; apiUrl?: string } = {}
+    // Mimics the harness index gate (BrowserAuth.authorizeIndex): 401 without
+    // the token, 303 + session cookie with it — the exact shapes the LAN
+    // visitor's browser round-trips.
+    const upstream = http.createServer((req, res) => {
+      const url = new URL(req.url ?? '/', 'http://up')
+      if (url.pathname === '/') {
+        seen.indexUrl = req.url
+        if (url.searchParams.get('token') === TOKEN) {
+          res.writeHead(303, { location: '/', 'set-cookie': 'dsh-auth-x=v1; Path=/; HttpOnly' })
+          res.end()
+          return
+        }
+        res.writeHead(401, { 'content-type': 'text/plain; charset=utf-8' })
+        res.end('dsh web authentication required; reopen the URL printed by dsh web.\n')
+        return
+      }
+      if (url.pathname === '/api/state') {
+        seen.apiUrl = req.url
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end('{}')
+        return
+      }
+      res.writeHead(404)
+      res.end('not found')
+    })
+    await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve))
+    const upstreamPort = (upstream.address() as AddressInfo).port
+    const proxy = startLanProxy({
+      listenHost: '127.0.0.1',
+      listenPort: 0,
+      upstreamHost: '127.0.0.1',
+      upstreamPort,
+      username: USER,
+      password: PASS,
+      indexToken: TOKEN,
+    })
+    const proxyPort = await proxy.ready
+    entry = { origin: `http://127.0.0.1:${proxyPort}`, seen }
+    entryCleanup = [
+      () => proxy.close(),
+      () =>
+        new Promise<void>((resolve) => {
+          upstream.closeAllConnections()
+          upstream.close(() => resolve())
+        }),
+    ]
+  })
+
+  afterEach(async () => {
+    for (const dispose of entryCleanup.splice(0).reverse()) await dispose()
+  })
+
+  it('appends the launch token to the entry navigation and passes the session exchange through', async () => {
+    const res = await fetch(`${entry.origin}/`, { headers: { authorization: basic() }, redirect: 'manual' })
+    // The visitor sees the harness's own 303 + session cookie — no token, no
+    // extra round trip, no manual URL.
+    expect(res.status).toBe(303)
+    expect(res.headers.get('set-cookie')).toContain('dsh-auth-')
+    const seen = new URL(entry.seen.indexUrl ?? '', 'http://up')
+    expect(seen.pathname).toBe('/')
+    expect(seen.searchParams.get('token')).toBe(TOKEN)
+  })
+
+  it('never overwrites a caller-supplied token', async () => {
+    await fetch(`${entry.origin}/?token=caller-token`, {
+      headers: { authorization: basic() },
+      redirect: 'manual',
+    })
+    expect(new URL(entry.seen.indexUrl ?? '', 'http://up').searchParams.get('token')).toBe('caller-token')
+  })
+
+  it('leaves non-entry paths untouched', async () => {
+    const res = await fetch(`${entry.origin}/api/state`, { headers: { authorization: basic() } })
+    expect(res.status).toBe(200)
+    expect(entry.seen.apiUrl).toBe('/api/state')
+    expect(entry.seen.indexUrl).toBeUndefined()
+  })
+
+  it('still gates unauthenticated requests behind Basic auth before any token is appended', async () => {
+    const res = await fetch(`${entry.origin}/`, { redirect: 'manual', headers: { accept: 'text/html' } })
+    expect(res.status).toBe(401)
+    expect(res.headers.get('www-authenticate')).toMatch(/^Basic realm=/)
+    expect(entry.seen.indexUrl).toBeUndefined()
+  })
+})
+
+describe('without a launch token (older or unreadable harness)', () => {
+  it('forwards the entry navigation untouched', async () => {
+    const res = await fetch(`${base()}/`, { headers: { authorization: basic() } })
+    expect(res.status).toBe(200)
+    expect(new URL(world.seen.indexUrl ?? '/', 'http://up').searchParams.get('token')).toBeNull()
   })
 })

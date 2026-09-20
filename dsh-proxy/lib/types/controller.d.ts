@@ -7,6 +7,12 @@ export interface EffectiveProxyOptions {
     upstreamPort: number;
     username: string;
     password: string;
+    /**
+     * Harness launch token for the index browser-session exchange; forwarded
+     * to the entry navigation so LAN visitors log in with Basic Auth alone.
+     * Runtime-only (never persisted).
+     */
+    indexToken?: string;
 }
 export interface ProxyControllerOptions {
     /** Options from the cordis config (schema defaults applied, upstream port resolved). */
