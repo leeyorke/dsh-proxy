@@ -5,9 +5,11 @@ English | [中文](README.md)
 An HTTP + WebSocket reverse proxy that forwards a LAN port to the local DSH service at `127.0.0.1:3080`.
 Supports Basic Auth, LAN access, and `crypto.randomUUID` polyfill injection.
 
+**compatible with DSH 0.1.6-alpha.2 at present**
+
 **Note**: This repository is a fork of [@smanx/dsh-proxy](https://github.com/smanx/dsh-proxy) carrying the following fixes:
 
-> Forked from the upstream branch to fix several bugs that occur when using Safari; compatible with dsh 0.1.1-rc2 at present, and future DSH updates may or may not remain compatible.
+> Forked from the upstream branch to fix several bugs that occur when using Safari;
 
 1. Socket error observer (fixes the Safari connection crash)
 2. Session-cookie single sign-on (fixes the double password prompt on Safari)

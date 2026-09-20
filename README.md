@@ -5,9 +5,11 @@
 HTTP + WebSocket 反向代理：把局域网端口转发到本地 DSH 服务 `127.0.0.1:3080`。
 支持 Basic Auth、局域网访问、`crypto.randomUUID` polyfill 注入。
 
+**最新兼容 DSH　0.1.6-alpha.2**
+
 **注**：本仓库为 [@smanx/dsh-proxy](https://github.com/smanx/dsh-proxy)的 fork 版本，修复了以下问题：
 
-> 从上游分支fork修了一些在safari上使用会产生的bug，最新兼容0.1.1-rc2，以后dsh更新不知道会不会兼容
+> 从上游分支fork修了一些在safari上使用会产生的bug
 
 1. socket 错误观察者（修 Safari 连接崩溃）
 2. 会话 cookie 单次登录（修 Safari 双密码框）

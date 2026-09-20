@@ -2,6 +2,13 @@
 
 本文档记录 dsh-proxy 的用户可见变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## 0.1.4
+
+### 变更
+
+- 围栏 fail-closed：requestRejection 若被 harness 改名/移除，从前会抛出后请求永远挂起；现在拒绝（403）+ 日志点名原因——API 漂移既不能悄悄打开通道，也不会卡住设置页。
+- 死socket 不再能击穿进程：响应 error 事件兜底 + dispatch 整体 try/catch，上传中途重置也有终态。
+
 ## 0.1.3
 
 ### 修复
