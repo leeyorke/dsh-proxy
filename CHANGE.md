@@ -2,6 +2,18 @@
 
 本文档记录 dsh-proxy 的用户可见变更。格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## 0.1.5
+
+### 修复
+
+- **修复 LAN 设备打开代理首页报 `web authentication required` 的问题。** DSH 0.1.6-alpha+ 给首页加了一次性 `?token=` 浏览器会话验证（换取 session cookie），裸导航会被 401。现在代理在入口导航上代填进程 launch token：仅对已通过 Basic 认证的请求追加、上游以 303 消费该 token 且不暴露给客户端、调用方自带的 token 不被覆盖；读不到 token（harness 版本不匹配）时降级为「手动打开一次打印的 `?token=` URL」并打警告，不会导致加载失败。
+  - 涉及文件：`dsh-proxy/src/proxy.ts`（入口导航代填）、`dsh-proxy/src/controller.ts`（透传）、`dsh-proxy/src/index.ts`（经 `connection.authenticatedUrl` 读取）。
+
+### 验证
+
+- `pnpm run check` 通过：typecheck ✓、vitest 8 个文件 96 个用例 ✓（新增 5 个入口代填用例）、esbuild 构建 ✓。
+- `DSH_SMOKE_SKIP_LIVE=1 node scripts/smoke.mjs`：18/18 通过——契约阶段现以本地 fake upstream 模拟 harness 索引门禁，对**真实 bundled 插件**端到端验证：代填后 303 + Set-Cookie 透传、调用方 token 不被覆盖、非入口路径不带 token。
+
 ## 0.1.4
 
 ### 变更

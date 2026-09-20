@@ -66,6 +66,8 @@ Settings-page changes persist and take precedence over the profile's `cordis.pat
    ```
 2. Browse to `http://<your-LAN-IP>:3081` → the browser shows its **native Basic Auth dialog** → enter the credentials → the DSH UI loads. The browser remembers the credentials, so subsequent visits open directly.
 
+> **Browser session, handled for you**: current DSH (0.1.6-alpha+) gates the index behind a one-time `?token=` exchange. The proxy appends the launch token to the entry navigation — only for requests that already passed Basic Auth; the upstream consumes it with a 303 and it never reaches the browser — so phones and desktops get in with Basic Auth alone, no manual URL. If the startup log warns that the launch token could not be read (harness mismatch), open the `?token=` URL printed by `dsh web` once (with the proxy's address substituted) and the session cookie takes over.
+
 > Windows Firewall: if LAN devices cannot connect, allow the port (admin PowerShell):
 > `netsh advfirewall firewall add rule name="dsh-proxy" dir=in action=allow protocol=TCP localport=3081`
 
@@ -86,6 +88,7 @@ pnpm run smoke   # full live smoke test against a running DSH on 127.0.0.1:3080
 - **Enablement**: password login is active only when `username` AND `password` are both non-empty (defaults are empty = open access); setting just one keeps it off.
 - **Mechanism**: HTTP Basic Auth via the browser's native dialog — every unauthenticated request (page, `/api/*`, scripts) gets `401 + WWW-Authenticate: Basic realm="dsh-proxy"`; WebSocket rejections carry the same header. There is **no custom login page and no session cookie**; after a successful login the browser caches the credentials per origin and sends them automatically (including on WebSocket handshakes).
 - **Public static files**: `/manifest.webmanifest` and `/favicon.svg` bypass the gate — browsers fetch them in credential-less contexts (PWA manifest, favicon), so requiring authentication would 401 them. They carry no secrets.
+- **Harness browser session**: DSH 0.1.6-alpha+ requires a browser-session cookie for the index and `/api`. The proxy performs the one-time launch-token exchange on the entry navigation (the upstream answers 303 + Set-Cookie; the token never reaches the client), and Basic Auth remains the single gate for the whole LAN surface — the session is obtained behind it. The settings page's `/dsh-proxy` channel requires the same session, which proxied visitors carry as a cookie.
 - Credential comparison is constant-time (`timingSafeEqual`).
 
 ## Security notes

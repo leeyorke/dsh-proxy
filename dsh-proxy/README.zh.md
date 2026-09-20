@@ -67,6 +67,8 @@ dsh plugin --profile web add file:C:/mydata/codes/dsh-proxy
 2. 浏览器访问 `http://<本机局域网IP>:3081` → **浏览器弹出原生 Basic Auth 登录框** → 输入用户名密码 → 进入 DSH 界面。
 3. 局域网内其他设备用同一地址访问；登录成功后浏览器会记住凭据，下次直接进入。
 
+> **浏览器会话自动处理**：新版 DSH（0.1.6-alpha+）的首页有一次性的 `?token=` 会话验证。代理会在入口导航上**自动代填**该 token——仅对已通过 Basic 认证的请求追加，token 由上游 303 消费、不会下发到浏览器——手机/电脑打开即进，无需手动拼 URL。若启动日志提示无法读取 launch token（harness 版本不匹配），首次访问需手动打开 `dsh web` 启动日志打印的 `?token=` 地址一次（把 `127.0.0.1:3080` 换成代理地址），之后会话 cookie 自动生效。
+
 > Windows 防火墙：若局域网设备连不上，为本机放行该端口（管理员 PowerShell）：
 > `netsh advfirewall firewall add rule name="dsh-proxy" dir=in action=allow protocol=TCP localport=3081`
 
@@ -88,6 +90,7 @@ pnpm run smoke   # 对正在运行的 DSH（127.0.0.1:3080）做全流程冒烟�
 - **启用条件**：`username` 与 `password` **同时非空**才启用密码登录（默认均为空 = 开放访问）；只设置其一仍保持关闭。
 - **认证方式**：HTTP Basic Auth，浏览器原生弹窗——未认证的**任何**请求（页面、`/api/*`、脚本）→ **401 + `WWW-Authenticate: Basic realm="dsh-proxy"`**；WebSocket 拒绝同样带挑战头。登录成功后浏览器按站点缓存凭据，后续请求（含 WS 握手）自动携带。**没有自绘登录页、没有会话 Cookie。**
 - **公开静态文件**：`/manifest.webmanifest` 与 `/favicon.svg` 免认证——浏览器会在不带凭据的上下文（PWA 清单、图标）拉取它们，强制认证会 401。
+- **harness 浏览器会话**：DSH 0.1.6-alpha+ 的首页与 `/api` 要求浏览器会话 cookie。代理在入口导航代填进程 launch token 完成这一次性换取（上游以 303 + Set-Cookie 应答，token 不暴露给客户端）；Basic 认证仍是整个 LAN 面的唯一闸门——会话是在闸门之后替访客取得的。设置页的 `/dsh-proxy` 通道同样要求该会话，经代理访问时随 cookie 一并通过。
 - 凭据比较用常量时间（`timingSafeEqual`）。
 
 ## 安全提示
