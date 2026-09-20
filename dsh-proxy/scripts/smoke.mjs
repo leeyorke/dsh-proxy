@@ -7,6 +7,8 @@
  * randomUUID polyfill injection, and WebSocket handshakes.
  *
  * Usage: pnpm run smoke   (requires the web app on 127.0.0.1:3080)
+ * Set DSH_SMOKE_SKIP_LIVE=1 to run only the plugin-contract phase (no live
+ * DSH needed — drives the bundled apply() with a fake ctx).
  */
 import net from 'node:net'
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
@@ -69,6 +71,17 @@ function rawUpgrade(port, path, headers) {
 }
 
 async function main() {
+  if (process.env.DSH_SMOKE_SKIP_LIVE !== '1') {
+    await liveProxyPhase()
+  }
+  await pluginContractPhase()
+
+  console.log(`\nsmoke: ${passed} passed, ${failed} failed`)
+  process.exit(failed === 0 ? 0 : 1)
+}
+
+/** Phase 1: the bundled proxy against a running DSH web app. */
+async function liveProxyPhase() {
   const upstream = `http://127.0.0.1:${UPSTREAM}`
   console.log(`dsh-proxy smoke — upstream ${upstream}, auth ${USER}/***`)
   const handle = startLanProxy({
@@ -137,19 +150,20 @@ async function main() {
   } finally {
     await handle.close()
   }
-
-  await pluginContractPhase()
-
-  console.log(`\nsmoke: ${passed} passed, ${failed} failed`)
-  process.exit(failed === 0 ? 0 : 1)
 }
 
 /**
  * Plugin-contract phase: drive the BUNDLED apply() (lib/index.cjs — the same
  * artifact the profile loads) against a fake cordis ctx, exercising the
- * /dsh-proxy RPC channel, the settings persistence, and the restart path
- * end to end without the web app. $DSH_HOME is redirected to a temp dir so
- * the smoke never touches the user's real persisted config.
+ * /dsh-proxy RPC channel — fence, envelope, dispatch — the settings
+ * persistence, and the restart path end to end without the web app.
+ * $DSH_HOME is redirected to a temp dir so the smoke never touches the
+ * user's real persisted config.
+ *
+ * The route is driven through the REAL bundled handler with fake
+ * node:http req/res objects: the breakage this guards against (the
+ * dedicated-channel mount failing under a real fiber) was invisible to a
+ * fake ctx that only captured a handler function.
  */
 async function pluginContractPhase() {
   console.log('\ndsh-proxy plugin contract — bundled apply() with a fake ctx')
@@ -165,16 +179,23 @@ async function pluginContractPhase() {
   const tempHome = mkdtempSync(join(tmpdir(), 'dsh-proxy-smoke-'))
   process.env.DSH_HOME = tempHome
   try {
-    let registered = null
+    let registeredRoute = null
+    let fenceReject = 0
+    const fenceCalls = []
     const effectFns = []
     const fakeCtx = {
-      webServer: { port: UPSTREAM, host: '127.0.0.1' },
+      webServer: {
+        port: UPSTREAM,
+        host: '127.0.0.1',
+        register: (route) => {
+          registeredRoute = route
+          return () => {}
+        },
+      },
       connection: {
-        rpc: {
-          handle: (channel, handler, options) => {
-            registered = { channel, handler, options }
-            return async () => {}
-          },
+        requestRejection: (request) => {
+          fenceCalls.push(request)
+          return fenceReject === 0 ? undefined : fenceReject
         },
       },
       logger: {
@@ -191,36 +212,96 @@ async function pluginContractPhase() {
     const proxyDisposer = await effectFns[0]()
     const rpcCleanup = effectFns[1]()
     check(
-      'RPC channel registered as /dsh-proxy with loopback authority',
-      registered?.channel === '/dsh-proxy' && registered?.options?.authority === 'loopback',
+      'RPC channel mounted as a prefix route on the web server',
+      registeredRoute?.kind === 'prefix' && registeredRoute?.path === '/dsh-proxy',
+      JSON.stringify(registeredRoute && { kind: registeredRoute.kind, path: registeredRoute.path }),
     )
 
-    const status1 = await registered.handler('status', undefined, new AbortController().signal)
+    // Drive the bundled route handler with fake node:http objects.
+    const rpc = async (endpoint, payload, opts = {}) => {
+      const body = JSON.stringify({
+        type: 'client-request',
+        rpcId: opts.rpcId ?? `smoke-${endpoint}`,
+        method: opts.method ?? endpoint,
+        ...payload === undefined ? {} : { payload },
+      })
+      const req = {
+        method: 'POST',
+        url: opts.url ?? `/dsh-proxy/${endpoint}`,
+        headers: { 'content-type': 'application/json' },
+        async *[Symbol.asyncIterator]() {
+          if (body !== undefined) yield Buffer.from(body, 'utf8')
+        },
+        destroy() {},
+      }
+      const res = {
+        statusCode: 0,
+        headers: {},
+        body: '',
+        writableEnded: false,
+        writeHead(status, headers) {
+          this.statusCode = status
+          this.headers = headers ?? {}
+          return this
+        },
+        write(chunk) {
+          this.body += String(chunk)
+          return true
+        },
+        end(chunk) {
+          if (chunk !== undefined) this.body += String(chunk)
+          this.writableEnded = true
+          return this
+        },
+        on() {},
+      }
+      await registeredRoute.handler(req, res)
+      let envelope
+      try {
+        envelope = JSON.parse(res.body)
+      } catch {
+        envelope = undefined // transport-level answers (401/403/404/…) are plain text
+      }
+      return { status: res.statusCode, envelope }
+    }
+
+    const status1 = await rpc('status')
     check(
       'RPC status returns ok with a bound port and green lights',
-      status1?.ok === true
-        && typeof status1.value?.listenPort === 'number'
-        && status1.value?.listenPort > 0
-        && status1.value?.proxyListening === true
-        && status1.value?.upstreamReachable === true,
+      status1.status === 200
+        && status1.envelope?.type === 'server-response'
+        && status1.envelope?.result?.ok === true
+        && typeof status1.envelope.result.value?.listenPort === 'number'
+        && status1.envelope.result.value.listenPort > 0
+        && status1.envelope.result.value.proxyListening === true
+        && status1.envelope.result.value.upstreamReachable === true,
       JSON.stringify(status1),
     )
+    check('every channel request passes the Connection trust fence', fenceCalls.length === 1, `fenceCalls=${fenceCalls.length}`)
 
-    const updated = await registered.handler(
-      'update',
-      { username: 'smoke-user', password: 'smoke-pass' },
-      new AbortController().signal,
+    // The fence gates the channel: a rejected request never reaches the handler.
+    fenceReject = 401
+    const fenced = await rpc('status')
+    check(
+      'a fence-rejected request is refused before dispatch',
+      fenced.status === 401 && fenced.envelope === undefined,
+      `status=${fenced.status}`,
     )
+    fenceReject = 0
+
+    const updated = await rpc('update', { username: 'smoke-user', password: 'smoke-pass' })
     check(
       'RPC update rotates credentials and restarts',
-      updated?.ok === true && updated.value?.status?.username === 'smoke-user',
+      updated.envelope?.result?.ok === true && updated.envelope.result.value?.status?.username === 'smoke-user',
       JSON.stringify(updated),
     )
 
-    const status2 = await registered.handler('status', undefined, new AbortController().signal)
+    const status2 = await rpc('status')
     check(
       'status reflects the new username and persisted flag',
-      status2?.ok === true && status2.value?.username === 'smoke-user' && status2.value?.persisted === true,
+      status2.envelope?.result?.value?.username === 'smoke-user'
+        && status2.envelope.result.value.persisted === true,
+      JSON.stringify(status2),
     )
 
     const persisted = JSON.parse(readFileSync(join(tempHome, 'dsh-proxy.json'), 'utf8'))
@@ -229,42 +310,51 @@ async function pluginContractPhase() {
       persisted.username === 'smoke-user' && persisted.password === 'smoke-pass',
     )
 
-    const conflict = await registered.handler(
-      'update',
-      { listenPort: status2.value.upstreamPort },
-      new AbortController().signal,
+    const conflict = await rpc('update', { listenPort: status2.envelope.result.value.upstreamPort })
+    check(
+      'listen port equal to the default service port rejected',
+      conflict.envelope?.result?.ok === false,
+      JSON.stringify(conflict),
     )
-    check('listen port equal to the default service port rejected', conflict?.ok === false, JSON.stringify(conflict))
 
-    const cleared = await registered.handler(
-      'update',
-      { username: '', password: '' },
-      new AbortController().signal,
-    )
+    const cleared = await rpc('update', { username: '', password: '' })
     check(
       'clearing credentials disables password login (set-empty semantics)',
-      cleared?.ok === true && cleared.value?.status?.authEnabled === false && cleared.value?.status?.password === '',
+      cleared.envelope?.result?.ok === true
+        && cleared.envelope.result.value?.status?.authEnabled === false
+        && cleared.envelope.result.value.status.password === '',
       JSON.stringify(cleared),
     )
-    const reopened = await registered.handler('update', { username: 'smoke-user', password: 'smoke-pass' }, new AbortController().signal)
+    const reopened = await rpc('update', { username: 'smoke-user', password: 'smoke-pass' })
     check(
       're-setting both credentials re-enables password login',
-      reopened?.ok === true && reopened.value?.status?.authEnabled === true,
+      reopened.envelope?.result?.ok === true && reopened.envelope.result.value?.status?.authEnabled === true,
     )
 
-    const stopped = await registered.handler('stop', {}, new AbortController().signal)
+    const stopped = await rpc('stop', {})
     check(
       'RPC stop answers with the proxy stopped',
-      stopped?.ok === true && stopped.value?.proxyListening === false,
+      stopped.envelope?.result?.ok === true && stopped.envelope.result.value?.proxyListening === false,
       JSON.stringify(stopped),
     )
     // Let the deferred listener close, then bring it back up.
     await new Promise((resolve) => setTimeout(resolve, 400))
-    const started = await registered.handler('start', {}, new AbortController().signal)
+    const started = await rpc('start', {})
     check(
       'RPC start brings the proxy back up',
-      started?.ok === true && started.value?.proxyListening === true,
+      started.envelope?.result?.ok === true && started.envelope.result.value?.proxyListening === true,
       JSON.stringify(started),
+    )
+
+    // Envelope-level failures answer inside the envelope (HTTP 200), never as
+    // transport errors — the browser half throws on any non-2xx.
+    const mismatch = await rpc('status', undefined, { method: 'update', rpcId: 'smoke-mismatch' })
+    check(
+      'method/endpoint disagreement answers an error envelope, not a transport error',
+      mismatch.status === 200
+        && mismatch.envelope?.result?.ok === false
+        && mismatch.envelope.result.error.code === 'gateway/bad-request',
+      JSON.stringify(mismatch),
     )
 
     rpcCleanup()

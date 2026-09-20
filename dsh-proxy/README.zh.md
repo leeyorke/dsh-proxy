@@ -55,7 +55,7 @@ dsh plugin --profile web add file:C:/mydata/codes/dsh-proxy
 - **运行状态**：两个红绿灯指示 —— **代理服务端口**（监听地址:端口，绿灯=代理实际在监听，红灯=端口被占用等绑定失败）与**默认服务端口**（DSH 服务端口，绿灯=可探测到默认服务，红灯=不可达）；另有当前用户名、**密码登录是否启用**；右上角有 **启动 / 停止** 按钮（运行中时「启动」置灰，未运行时「停止」置灰）。
 - **修改设置**：可改 **代理服务端口（监听端口）**、**用户名**、**密码**（留空 = 设为空）。点「应用」后，配置写入 `$DSH_HOME/dsh-proxy.json` 并**立即重启转发服务**；改监听端口后局域网访问地址随之变化。
 
-设置页的修改会**持久化**并优先于 profile 的 `cordis.patch.yml`；`listenHost` / `listenPort` 等仍只能通过 `cordis.patch.yml` 修改。插件通过宿主 RPC 通道 `/dsh-proxy`（`status` / `update` / `start` / `stop`）提供该能力，通道仅限 loopback 权威（经代理改写后 LAN 端同样可访问）。
+设置页的修改会**持久化**并优先于 profile 的 `cordis.patch.yml`；`listenHost` / `listenPort` 等仍只能通过 `cordis.patch.yml` 修改。插件通过宿主 RPC 通道 `/dsh-proxy`（`status` / `update` / `start` / `stop`）提供该能力。该通道的物理路由由插件自持（直接注册在注入的 `ctx.webServer` 上），并套用与 `/api` 相同的 Connection 信任篱笆（Host/Origin 检查）+ 浏览器会话认证——代理会把 Host/Origin 改写为 loopback 上游，因此经代理的 LAN 流量可通过篱笆。
 
 ## 使用
 

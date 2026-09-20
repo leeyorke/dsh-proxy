@@ -9,7 +9,12 @@
  * The plugin also mounts the `/dsh-proxy` generic Connection RPC channel:
  * `status` reads the running proxy, `update` persists a settings patch (target
  * upstream port, username, password) into `$DSH_HOME/dsh-proxy.json` and
- * restarts the forwarding service — the backend of the settings section.
+ * restarts the forwarding service — the backend of the settings section. The
+ * channel's physical route is owned by this plugin (registered on the injected
+ * `ctx.webServer`, fenced by `ctx.connection.requestRejection`) instead of
+ * going through `connection.rpc.handle`: the harness's dedicated-channel
+ * mount resolves `webServer` through the client-connection plugin's fiber and
+ * throws once `webServer` stopped being a static injection there.
  */
 import type { Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
@@ -17,7 +22,7 @@ export { lanAddresses, startLanProxy } from './proxy.ts';
 export type { LanProxyHandle, LanProxyOptions } from './proxy.ts';
 /** Stable Cordis plugin name (the Loader entry and package name). */
 export declare const name = "@leeyorke/dsh-proxy";
-/** Services required before load: the web server (upstream port source) and the Connection RPC registry. */
+/** Services required before load: the web server (upstream port source and channel route host) and the Connection service (the channel route's trust fence). */
 export declare const inject: string[];
 /** Plugin configuration, validated at load by the Loader. */
 export interface Config {

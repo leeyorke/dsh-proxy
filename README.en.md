@@ -29,4 +29,7 @@ netsh advfirewall firewall add rule name="dsh-proxy" dir=in action=allow protoco
 # Remove the plugin
 dsh plugin --profile web rm leeyorke/dsh-proxy
 
+# Update the plugin
+dsh plugin --profile web up github:leeyorke/dsh-proxy#master
+
 ```

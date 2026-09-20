@@ -55,7 +55,7 @@ After restarting `dsh web`, open DSH settings (gear icon) → "LAN Proxy":
 - **Status**: two red/green running lights — the **proxy port** (listen address:port; green = the proxy is actually bound, red = bind failed e.g. port busy) and the **default service port** (DSH service port; green = the default service answers a probe, red = unreachable) — plus the current username and whether password login is enabled. A **Start/Stop** button pair sits in the card header: Start is grayed out while running, Stop is grayed out while stopped.
 - **Edit settings**: change the **proxy listen port**, **username**, and **password** (leave empty to set blank). "Apply" writes `$DSH_HOME/dsh-proxy.json` and **immediately restarts the forwarding service**; changing the listen port moves the LAN access address.
 
-Settings-page changes persist and take precedence over the profile's `cordis.patch.yml`; `listenHost` / `listenPort` remain cordis-only. The page talks to the host through the `/dsh-proxy` Connection RPC channel (`status` / `update` / `start` / `stop`), scoped to loopback authority (still reachable from the LAN via the proxy's Host rewrite).
+Settings-page changes persist and take precedence over the profile's `cordis.patch.yml`; `listenHost` / `listenPort` remain cordis-only. The page talks to the host through the `/dsh-proxy` Connection RPC channel (`status` / `update` / `start` / `stop`). The channel's physical route is owned by the plugin itself — registered directly on the injected `ctx.webServer` — and fenced by Connection's Host/Origin trust check plus browser-session authentication, the same policy `/api` rides (the proxy rewrites Host and Origin to the loopback upstream, so proxied LAN traffic passes the fence).
 
 ## Usage
 
